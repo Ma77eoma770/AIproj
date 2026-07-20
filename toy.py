@@ -135,6 +135,9 @@ class graph:
     
     def get_neighbors_names(self, node):
         return [self.G.nodes[n]['name'] for n in self.G.successors(node)]
+    
+    def get_node_name(self, node):
+        return self.G.nodes[node]['name']
 
 class environment():
     def __init__(self,pathlength):
@@ -180,7 +183,9 @@ class environment():
         
         # 3. L'attaccante risponde muovendosi sul grafo modificato
         att_status = self.att.step(self)
-        
+        if att_status[0] == 'Stuck':
+            self.sim_on = False
+            print("L'attaccante è rimasto bloccato senza alternative. Simulazione terminata.")
         if hasattr(self.att, 'previous_heuristic') and hasattr(self.att, 'current_heuristic'):
             h_prev = self.att.previous_heuristic
             h_curr = self.att.current_heuristic
@@ -191,6 +196,8 @@ class environment():
                 # IL VERO PREMIO: 30 punti ogni volta che l'attaccante va a sbattere!
                 reward += 30.0  
 
+        undirected_G = self.G.G.to_undirected()
+
         # Aggiornamento dello stato osservabile
         if att_status[0] == 'Normal Step':
             try:
@@ -198,10 +205,9 @@ class environment():
             except nx.NetworkXNoPath:
                 self.distanceFromStart = 0
             try:
-                self.distanceToEnd = nx.shortest_path_length(self.G.G, source=self.att.current_node, target=self.G.target_node)
+                self.distanceToEnd = nx.shortest_path_length(undirected_G, source=self.att.current_node, target=self.G.target_node)
             except nx.NetworkXNoPath:
                 self.distanceToEnd = 1000
-            # RIMOSSO "reward += 5". L'IA ora deve SUDARE per fare punti usando Deadend e Loop!
         
         if att_status[0] == 'Backtracked':
             try:
@@ -209,7 +215,7 @@ class environment():
             except nx.NetworkXNoPath:
                 self.distanceFromStart = 0
             try:
-                self.distanceToEnd = nx.shortest_path_length(self.G.G, source=self.att.current_node, target=self.G.target_node)
+                self.distanceToEnd = nx.shortest_path_length(undirected_G, source=self.att.current_node, target=self.G.target_node)
             except nx.NetworkXNoPath:
                 self.distanceToEnd = 1000
             
@@ -229,11 +235,11 @@ class environment():
         return prev_state, dif_action, reward, next_state, done
     
     def getCurrentState(self):
-        
+        patience_bucket = int(self.extimatedPatience // 20)  # Bucket di pazienza da 0 a 10
         return (
             self.distanceFromStart, 
             self.distanceToEnd, 
-            int(self.extimatedPatience)
+            patience_bucket
         )
     
     def get_neighbors(self,current_node):
@@ -244,94 +250,129 @@ class environment():
         
 class Attaccante():
     def __init__(self, start_node, start_heuristic, max_patience=100):
-        self.frontier = []      # Frontiera
-        self.explored_nodes = set([start_node])  # Esplorati
+        self.frontier = []      
+        self.explored_nodes = set([start_node])  
         self.g_scores = {start_node: 0.0}
-        self.patience = max_patience
         self.max_patience = max_patience
+        self.patience = max_patience
         self.current_node = start_node
-
         self.step_count = 0
         
         self.local_graph = nx.DiGraph()
-        
         self.local_graph.add_node(start_node, heuristic=start_heuristic)
+        
+        self.previous_node = None
         self.current_heuristic = start_heuristic
-        self.previous_heuristic = start_heuristic
+
+        self.failed_nodes = set()  # Nodi che hanno portato a vicoli ciechi o loop
 
     def step(self, env):
+        self.env = env
+        
+        if env.checkTarget(self.current_node):
+            return ('Target Reached', self.current_node)
+        
         self.step_count += 1
-        
-        # 1. ESPANSIONE (L'attaccante si guarda intorno ORA e vede le trappole appena piazzate)
-        g_curr = self.g_scores[self.current_node]
-        visible_neighbors = env.get_neighbors(self.current_node)
-        
-        for neighbor, h_neighbor in visible_neighbors:
-            if neighbor not in self.local_graph:
-                self.local_graph.add_node(neighbor, heuristic=h_neighbor)
-                self.local_graph.add_edge(self.current_node, neighbor)
-            
-            # Ignoriamo i rami vecchi
-            if neighbor in self.explored_nodes:
-                continue
-                
-            if g_curr + 1 < self.g_scores.get(neighbor, float('inf')):
-                self.g_scores[neighbor] = g_curr + 1
-                f_neighbor = g_curr + 1 + h_neighbor
-                hq.heappush(self.frontier, (f_neighbor, g_curr + 1, neighbor, self.patience, self.step_count, self.current_node))
-        
-        # Se siamo chiusi in un vicolo cieco senza alternative
-        if not self.frontier:
-            return ('Backtracked', self.current_node)
 
-        # 2. SCELTA DELLA PROSSIMA MOSSA
-        f_score, g_next, next_node, snapshot_patience, step_added, previous_node = hq.heappop(self.frontier)
-        
-        self.patience = snapshot_patience
-        h_curr = self.local_graph.nodes[next_node]['heuristic']
-        self.current_heuristic = h_curr
-        
-        if previous_node is not None and previous_node in self.local_graph.nodes:
-            self.previous_heuristic = self.local_graph.nodes[previous_node]['heuristic']
-        else:
-            self.previous_heuristic = h_curr
-
-        # 3. CONTROLLO PAZIENZA (si frustra se non fa progressi spaziali)
-        if previous_node is not None and previous_node in self.local_graph.nodes:
-            h_prev = self.local_graph.nodes[previous_node]['heuristic']
-            if (h_prev - h_curr) > 0:
+        # 1. CONTROLLO PAZIENZA
+        self.current_heuristic = self.local_graph.nodes[self.current_node]['heuristic']
+        if self.previous_node is not None and self.previous_node in self.local_graph.nodes:
+            h_prev = self.local_graph.nodes[self.previous_node]['heuristic']
+            if (h_prev - self.current_heuristic) > 0:
                 self.patience = min(self.max_patience, self.patience + 5)
             else:
                 self.patience = max(0, self.patience - 15)             
         
         if self.patience <= 0:
-            self.backtrack() 
+            success = self.backtrack() 
+            if not success:
+                return ('Stuck', self.current_node)
             return ('Backtracked', self.current_node)
+        
+        # 2. ESPANSIONE
+        g_curr = self.g_scores[self.current_node]
+        visible_neighbors = env.get_neighbors(self.current_node)
+        
+        for neighbor, h_neighbor in visible_neighbors:
+            if neighbor in self.explored_nodes or neighbor in self.failed_nodes:
+                continue
+
+            if neighbor not in self.local_graph:
+                self.local_graph.add_node(neighbor, heuristic=h_neighbor)
+                self.local_graph.add_edge(self.current_node, neighbor)
+                
+            if g_curr + 1 < self.g_scores.get(neighbor, float('inf')):
+                self.g_scores[neighbor] = g_curr + 1
+                f_neighbor = g_curr + 1 + h_neighbor
+                hq.heappush(self.frontier, (f_neighbor, g_curr + 1, neighbor, self.patience, self.step_count, self.current_node))
+
+        if not self.frontier:
+            return ('Stuck', self.current_node)
+
+        # 3. SCELTA DELLA PROSSIMA MOSSA (Con filtro anti-doppioni)
+        # Poiché col backtracking l'agente ripassa per nodi vecchi, saltiamo le alternative già esplorate
+        while self.frontier:
+            f_score, g_next, next_node, snapshot_patience, step_added, prev_n = hq.heappop(self.frontier)
+            if next_node not in self.explored_nodes:
+                break
+        else:
+            # Se la frontiera si svuota scartando i doppioni
+            return ('Stuck', self.current_node)
 
         # 4. SPOSTAMENTO EFFETTIVO
         self.explored_nodes.add(next_node)
+        self.previous_node = self.current_node  
         self.current_node = next_node
-        
-        if env.checkTarget(self.current_node):
-            return ('Target Reached', self.current_node)
-            
         return ('Normal Step', self.current_node)
 
     def backtrack(self):
+        print(f"Starting backtracking from node {self.get_node_name(self.current_node)} due to patience 0")
+        
+        nodo_fallito = self.current_node
+        self.failed_nodes.add(nodo_fallito)
+        self.explored_nodes.add(nodo_fallito)
+        self.g_scores[nodo_fallito] = float('inf')
+        
+        # Potatura chirurgica sicura del ramo fallito
+        nodi_da_potare = set(nx.descendants(self.local_graph, nodo_fallito))
+        nodi_da_potare.add(nodo_fallito)
+        
+        for n in nodi_da_potare:
+            self.explored_nodes.add(n)
+            self.failed_nodes.add(n)
+            self.g_scores[n] = float('inf')
+
         new_frontier = []
         for f, g, node, patience, step_count, previous_node in self.frontier:
-            if node not in self.explored_nodes and step_count < self.step_count:
+            if node not in self.explored_nodes and node not in nodi_da_potare:
                 new_frontier.append((f, g, node, patience, step_count, previous_node))
+        
         self.frontier = new_frontier
         hq.heapify(self.frontier)
         
-        best_f,best_g,best_node,best_patience,best_step_count,best_previous_node = self.frontier[0]
+        if not self.frontier:
+            print('No more alternatives left in the frontier. Attacker is stuck.')
+            return False
+            
+        # CORREZIONE CHIAVE: Leggiamo l'alternativa ma NON la rimuoviamo (lo farà step al prossimo turno)
+        best_f, best_g, best_node, best_patience, best_step_count, best_previous_node = self.frontier[0]
+        
+        # Riportiamo fisicamente l'agente sull'antenato (es. il nodo B) per riprendere il cammino
         self.current_node = best_previous_node
         self.patience = best_patience
         self.step_count = best_step_count
-    
+        
+        # Ripristiniamo coerentemente il 'previous_node' guardando il grafo
+        parents = list(self.local_graph.predecessors(best_previous_node))
+        self.previous_node = parents[0] if parents else None
+        
+        print(f"Backtracking complete. Returned to ancestor: {self.get_node_name(self.current_node)}")
+        return True
     def checkPatience(self):
         return self.patience <= 0
+    
+    def get_node_name(self, node):
+        return self.env.G.get_node_name(node) if hasattr(self, 'env') else f"Node_{node}"
 
 class Difensore():
     def __init__(self, action_dimension=4, learning_rate=0.1, epsilon=0.1, gamma=0.9, epsilon_decay=0.9999, min_epsilon=0.01):
@@ -385,10 +426,11 @@ if __name__ == "__main__":
     # 1. Inizializziamo il difensore globale che manterrà la memoria tra i vari grafi
     difensore_in_training = Difensore(action_dimension=4, learning_rate=0.1, epsilon=0.9, gamma=0.95,epsilon_decay=0.9995, min_epsilon=0.01)
     
-    NUM_EPISODI = 10000
+    NUM_EPISODI = 1
     print(f"Inizio addestramento del Difensore Q-Learning (POMDP) per {NUM_EPISODI} episodi...\n")
     
     for episodio in range(1, NUM_EPISODI + 1):
+        print(f"\n=== EPISODIO {episodio} ===")
         # Generiamo grafi di lunghezza variabile ad ogni episodio per favorire la generalizzazione
         lunghezza_percorso = rd.randint(5, 10)
         env = environment(pathlength=lunghezza_percorso)
@@ -399,9 +441,11 @@ if __name__ == "__main__":
         env.reset()
         done = False
         total_reward = 0.0
-        
+        step_count = 0
         # Loop dell'episodio corrente
         while not done and env.sim_on:
+            step_count += 1
+            env.G.save_graph_png(f"episodio_{episodio}_step_{step_count}.png")
             # step() esegue l'azione del difensore, la risposta dell'attaccante e calcola la ricompensa
             prev_state, action, reward, next_state, done = env.step(training=True)
             
@@ -418,66 +462,67 @@ if __name__ == "__main__":
             
     print("\nAddestramento Completato! La Q-table del difensore ha mappato", len(difensore_in_training.q_table), "stati.")
     print("\n" + "="*50)
-    print("INIZIO SIMULAZIONE DI VALUTAZIONE (EPISODIO N+1)")
-    print("="*50)
     
-    # 1. Creiamo un ambiente dedicato per la simulazione finale
-    lunghezza_test = 6  # Fissiamo una lunghezza per avere un output leggibile
-    env_test = environment(pathlength=lunghezza_test)
+    # print("INIZIO SIMULAZIONE DI VALUTAZIONE (EPISODIO N+1)")
+    # print("="*50)
     
-    # Assegniamo il nostro difensore completamente addestrato
-    env_test.dif = difensore_in_training
-    env_test.reset()
+    # # 1. Creiamo un ambiente dedicato per la simulazione finale
+    # lunghezza_test = 6  # Fissiamo una lunghezza per avere un output leggibile
+    # env_test = environment(pathlength=lunghezza_test)
     
-    done = False
-    step_sim = 0
-    total_test_reward = 0.0
+    # # Assegniamo il nostro difensore completamente addestrato
+    # env_test.dif = difensore_in_training
+    # env_test.reset()
     
-    # Mappatura delle azioni per una stampa leggibile
-    action_names = {
-        0: "Esca (Bait)", 
-        1: "Loop", 
-        2: "Vicolo Cieco (Deadend)", 
-        3: "Nessuna Azione / Altro"
-    }
+    # done = False
+    # step_sim = 0
+    # total_test_reward = 0.0
     
-    # Salviamo la foto iniziale del percorso base
-    env_test.G.save_graph_png(f"simulazione_step_{step_sim}_inizio.png")
+    # # Mappatura delle azioni per una stampa leggibile
+    # action_names = {
+    #     0: "Esca (Bait)", 
+    #     1: "Loop", 
+    #     2: "Vicolo Cieco (Deadend)", 
+    #     3: "Nessuna Azione / Altro"
+    # }
     
-    while not done and env_test.sim_on:
-        step_sim += 1
-        print(f"\n--- TURNO {step_sim} ---")
+    # # Salviamo la foto iniziale del percorso base
+    # env_test.G.save_graph_png(f"simulazione_step_{step_sim}_inizio.png")
+    
+    # while not done and env_test.sim_on:
+    #     step_sim += 1
+    #     print(f"\n--- TURNO {step_sim} ---")
         
-        # Rileviamo la posizione attuale dell'attaccante
-        att_node = env_test.att.current_node
-        node_name = env_test.G.G.nodes[att_node]['name']
-        print(f"📍 Posizione Attaccante: Nodo {att_node} [{node_name}]")
+    #     # Rileviamo la posizione attuale dell'attaccante
+    #     att_node = env_test.att.current_node
+    #     node_name = env_test.G.G.nodes[att_node]['name']
+    #     print(f"📍 Posizione Attaccante: Nodo {att_node} [{node_name}]")
         
-        # Rileviamo lo stato che viene passato alla rete
-        curr_state = env_test.getCurrentState()
-        print(f"📊 Stato POMDP (visto dal difensore): Distanza_Start={curr_state[0]}, Distanza_Target={curr_state[1]}, Pazienza_Stimata={curr_state[2]}")
+    #     # Rileviamo lo stato che viene passato alla rete
+    #     curr_state = env_test.getCurrentState()
+    #     print(f"📊 Stato POMDP (visto dal difensore): Distanza_Start={curr_state[0]}, Distanza_Target={curr_state[1]}, Pazienza_Stimata={curr_state[2]}")
         
-        # IL DIFENSORE SCEGLIE L'AZIONE (training=False impone l'Exploit puro, senza mosse random)
-        chosen_action = env_test.dif.step(curr_state, training=False)
-        print(f"🛡️  Azione scelta dalla Q-Table: {action_names.get(chosen_action, 'Sconosciuta')} (Azione {chosen_action})")
+    #     # IL DIFENSORE SCEGLIE L'AZIONE (training=False impone l'Exploit puro, senza mosse random)
+    #     chosen_action = env_test.dif.step(curr_state, training=False)
+    #     print(f"🛡️  Azione scelta dalla Q-Table: {action_names.get(chosen_action, 'Sconosciuta')} (Azione {chosen_action})")
         
-        # Facciamo avanzare l'ambiente di uno step
-        # Passiamo training=False anche qui per coerenza
-        prev_state, action, reward, next_state, done = env_test.step(training=False)
-        total_test_reward += reward
+    #     # Facciamo avanzare l'ambiente di uno step
+    #     # Passiamo training=False anche qui per coerenza
+    #     prev_state, action, reward, next_state, done = env_test.step(training=False)
+    #     total_test_reward += reward
         
-        # Mostriamo il risultato dell'azione sull'attaccante
-        print(f"💥 Reward di questo turno: {reward}")
-        print(f"😡 Pazienza REALE dell'attaccante: {env_test.att.patience}")
-        print(f"🗺️  Frontiera attuale dell'A*: {[n[2] for n in env_test.att.frontier]}")
+    #     # Mostriamo il risultato dell'azione sull'attaccante
+    #     print(f"💥 Reward di questo turno: {reward}")
+    #     print(f"😡 Pazienza REALE dell'attaccante: {env_test.att.patience}")
+    #     print(f"🗺️  Frontiera attuale dell'A*: {[n[2] for n in env_test.att.frontier]}")
         
-        # Scattiamo la foto del grafo dopo le modifiche
-        nome_foto = f"simulazione_step_{step_sim}.png"
-        env_test.G.save_graph_png(nome_foto)
-        # La funzione save_graph_png ha già un suo print integrato[cite: 3]
+    #     # Scattiamo la foto del grafo dopo le modifiche
+    #     nome_foto = f"simulazione_step_{step_sim}.png"
+    #     env_test.G.save_graph_png(nome_foto)
+    #     # La funzione save_graph_png ha già un suo print integrato[cite: 3]
         
-    print("\n" + "="*50)
-    print("SIMULAZIONE TERMINATA")
-    print("="*50)
-    print(f"🏆 Reward Totale accumulato: {total_test_reward}")
-    print(f"🔍 Nodi totali esplorati (e sprecati) dall'attaccante: {len(env_test.att.explored_nodes)}")
+    # print("\n" + "="*50)
+    # print("SIMULAZIONE TERMINATA")
+    # print("="*50)
+    # print(f"🏆 Reward Totale accumulato: {total_test_reward}")
+    # print(f"🔍 Nodi totali esplorati (e sprecati) dall'attaccante: {len(env_test.att.explored_nodes)}")
