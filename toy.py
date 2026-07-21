@@ -41,7 +41,7 @@ class graph:
         newname= self.G.nodes[start_node]['name'] + "_bait"
 
         old_heuristic = self.G.nodes[start_node]['heuristic']
-        self.G.add_node(newid, name=newname, heuristic = max(1, old_heuristic - 2), is_bait=True)
+        self.G.add_node(newid, name=newname, heuristic = max(1, old_heuristic - 1), is_bait=True)
         self.G.add_edge(start_node, newid)
         return newid
     
@@ -56,7 +56,7 @@ class graph:
             else:
                 old_heuristic = self.G.nodes[newid-1]['heuristic']
 
-            self.G.add_node(newid, name=newname, heuristic=max(1, old_heuristic - 2), is_bait=True)
+            self.G.add_node(newid, name=newname, heuristic=max(1, old_heuristic - 1), is_bait=True)
             
             if i == 0:
                 self.G.add_edge(start_node,newid)
@@ -76,57 +76,146 @@ class graph:
             else:
                 old_heuristic = self.G.nodes[newid-1]['heuristic']
 
-            self.G.add_node(newid, name=newname, heuristic=max(1, old_heuristic - 2), is_bait=True)
+            self.G.add_node(newid, name=newname, heuristic=max(1, old_heuristic - 1), is_bait=True)
             
             if i == 0:
                 self.G.add_edge(start_node,newid)
             else:
                 self.G.add_edge(newid-1,newid)
 
-    def save_graph_png(self, filename="grafo_progetto.png"):
+    def save_graph_png(self, filename="grafo_progetto.png", attacker_node=None, attacker_patience=None):
         import matplotlib.pyplot as plt
         
-        plt.figure(figsize=(10, 8))
+        fig, ax = plt.subplots(figsize=(12, 9))
         
         # 1. Definiamo i colori dei nodi in base alle loro proprietà e le etichette
         node_colors = []
+        node_sizes = []
         labels = {}
         
         for node, data in self.G.nodes(data=True):
-            # Recuperiamo l'euristica (arrotondata a 1 decimale per pulizia visiva)
             heuristic_val = data.get('heuristic', 0.0)
-            
-            # Salviamo il nome e l'euristica su due righe da stampare sul nodo
-            labels[node] = f"{data['name']}\nH: {heuristic_val:.1f}"
-            
-            # Coloriamo in modo diverso a seconda del tipo di nodo
-            if data['name'] == "Start":
-                node_colors.append("lightgreen")
-            elif data['name'] == "Target":
-                node_colors.append("gold")
-            elif data.get('is_bait', False):
-                node_colors.append("salmon") # Esche in rosso/arancio
+            base_label = f"{data['name']}\nH: {heuristic_val:.1f}"
+            if node == attacker_node:
+                labels[node] = f"{base_label}\nATTACKER"
             else:
-                node_colors.append("skyblue") # Nodi normali del percorso
+                labels[node] = base_label
+            
+            if node == attacker_node:
+                node_colors.append("#ff6b6b")
+                node_sizes.append(2200)
+            elif data['name'] == "Start":
+                node_colors.append("#8ee38b")
+                node_sizes.append(1100)
+            elif data['name'] == "Target":
+                node_colors.append("#ffd166")
+                node_sizes.append(1100)
+            elif data.get('is_bait', False):
+                node_colors.append("#f4a261")
+                node_sizes.append(900)
+            else:
+                node_colors.append("#7ec8e3")
+                node_sizes.append(800)
         
-        # 2. Definiamo il layout (posizionamento dei nodi)
-        # spring_layout simula forze fisiche per distanziare bene i rami e i cicli
-        pos = nx.spring_layout(self.G, seed=42) 
+        # 2. Layout più pulito per grafi con molti nodi
+        if self.G.number_of_nodes() > 0:
+            start_node = getattr(self, "start_node", None)
+            if start_node is None:
+                start_node = next(iter(self.G.nodes()))
+
+            layer_map = {start_node: 0}
+            bfs_order = [start_node]
+            queue = [start_node]
+
+            while queue:
+                current = queue.pop()
+                for neighbor in self.G.successors(current):
+                    if neighbor not in layer_map:
+                        layer_map[neighbor] = layer_map[current] + 1
+                        bfs_order.append(neighbor)
+                        queue.append(neighbor)
+
+            for node in self.G.nodes():
+                if node not in layer_map:
+                    layer_map[node] = max(layer_map.values(), default=-1) + 1
+
+            layer_nodes = {}
+            for node, level in layer_map.items():
+                layer_nodes.setdefault(level, []).append(node)
+
+            for nodes in layer_nodes.values():
+                nodes.sort(key=lambda n: (self.G.nodes[n]['name'], n))
+
+            max_layer = max(layer_nodes.keys(), default=0)
+            pos = {}
+            for level, nodes in sorted(layer_nodes.items()):
+                x = (level - max_layer / 2.0) * 1.8
+                if len(nodes) == 1:
+                    ys = [0.0]
+                else:
+                    spacing = 1.4 / max(1, len(nodes) - 1)
+                    ys = [-0.7 + i * spacing for i in range(len(nodes))]
+                for index, node in enumerate(nodes):
+                    pos[node] = (x, ys[index])
+        else:
+            pos = {}
         
         # 3. Disegniamo il grafo
-        nx.draw_networkx_nodes(self.G, pos, node_color=node_colors, node_size=1200, edgecolors="black")
-        nx.draw_networkx_edges(self.G, pos, arrowstyle="->", arrowsize=15, edge_color="gray", width=1.5)
+        nx.draw_networkx_nodes(
+            self.G,
+            pos,
+            node_color=node_colors,
+            node_size=node_sizes,
+            edgecolors="black",
+            linewidths=1.2,
+            ax=ax,
+        )
+        nx.draw_networkx_edges(
+            self.G,
+            pos,
+            arrowstyle="->",
+            arrowsize=15,
+            edge_color="gray",
+            width=1.5,
+            alpha=0.85,
+            ax=ax,
+        )
         
-        # Disegniamo le etichette (font leggermente più piccolo per far spazio all'euristica)
-        nx.draw_networkx_labels(self.G, pos, labels=labels, font_size=7, font_family="sans-serif", font_weight="bold")
+        nx.draw_networkx_labels(
+            self.G,
+            pos,
+            labels=labels,
+            font_size=6,
+            font_family="sans-serif",
+            font_weight="bold",
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.8, edgecolor="0.7"),
+            ax=ax,
+        )
         
-        # Personalizzazioni estetiche della figura
-        plt.title("Rappresentazione del Grafo di Gioco (Tarpit)", fontsize=14, fontweight='bold')
-        plt.axis("off") # Nasconde gli assi cartesiani standard
+        if attacker_node is not None:
+            x, y = pos[attacker_node]
+            ax.scatter([x], [y], s=500, color="white", edgecolor="#ff6b6b", linewidths=3, zorder=5)
+            note = f"Attacker at {self.G.nodes[attacker_node]['name']}"
+            if attacker_patience is not None:
+                note += f" | patience {attacker_patience}"
+            ax.text(
+                x,
+                y + 0.12,
+                note,
+                fontsize=8,
+                fontweight="bold",
+                color="#991b1b",
+                ha="center",
+                bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="#ff6b6b", alpha=0.95),
+            )
+        
+        ax.set_title("Rappresentazione del Grafo di Gioco (Tarpit)", fontsize=14, fontweight='bold')
+        ax.axis("off")
+        plt.tight_layout()
         
         # Salva l'immagine
         plt.savefig(filename, format="PNG", dpi=300, bbox_inches='tight')
-        plt.close() # Chiude la figura per liberare memoria
+        plt.close(fig)
         print(f"Grafo salvato con successo in '{filename}'")
     
     def get_neighbors(self, node):
@@ -147,7 +236,7 @@ class environment():
     def reset(self):
         self.G.reset()
         self.sim_on = True
-        self.att = Attaccante(self.G.start_node, self.G.G.nodes[self.G.start_node]['heuristic'], max_patience=100)
+        self.att = Attaccante(self.G.start_node, self.G.G.nodes[self.G.start_node]['heuristic'])
         self.dif = Difensore()
         
         # Stato POMDP tracciato dall'ambiente
@@ -170,7 +259,7 @@ class environment():
         dif_action = self.dif.step(prev_state, training=training)
         
         reward = 0.0
-        # Costi vivi delle azioni per evitare spam incontrollato
+        #Costi vivi delle azioni per evitare spam incontrollato
         if dif_action == 0:
             self.G.add_bait(curr_node)
             reward -= 1.0 
@@ -185,16 +274,7 @@ class environment():
         att_status = self.att.step(self)
         if att_status[0] == 'Stuck':
             self.sim_on = False
-            print("L'attaccante è rimasto bloccato senza alternative. Simulazione terminata.")
-        if hasattr(self.att, 'previous_heuristic') and hasattr(self.att, 'current_heuristic'):
-            h_prev = self.att.previous_heuristic
-            h_curr = self.att.current_heuristic
-            if (h_prev - h_curr) > 0:
-                self.extimatedPatience = min(100.0, self.extimatedPatience + 5)
-            else:
-                self.extimatedPatience = max(0.0, self.extimatedPatience - 15)
-                # IL VERO PREMIO: 30 punti ogni volta che l'attaccante va a sbattere!
-                reward += 30.0  
+            print("L'attaccante è rimasto bloccato senza alternative. Simulazione terminata.")  
 
         undirected_G = self.G.G.to_undirected()
 
@@ -326,7 +406,7 @@ class Attaccante():
         return ('Normal Step', self.current_node)
 
     def backtrack(self):
-        print(f"Starting backtracking from node {self.get_node_name(self.current_node)} due to patience 0")
+        #print(f"Starting backtracking from node {self.get_node_name(self.current_node)} due to patience 0")
         
         nodo_fallito = self.current_node
         self.failed_nodes.add(nodo_fallito)
@@ -366,7 +446,7 @@ class Attaccante():
         parents = list(self.local_graph.predecessors(best_previous_node))
         self.previous_node = parents[0] if parents else None
         
-        print(f"Backtracking complete. Returned to ancestor: {self.get_node_name(self.current_node)}")
+        #print(f"Backtracking complete. Returned to ancestor: {self.get_node_name(self.current_node)}")
         return True
     def checkPatience(self):
         return self.patience <= 0
@@ -421,18 +501,38 @@ class Difensore():
     
 
 if __name__ == "__main__":
+    # difensore = Difensore()
+    # env = environment(15)
+    # G = env.G
+    # env.dif = difensore
+    # step_count = 0
+    # while env.sim_on:
+    #     step_count += 1
+    #     # env.G.save_graph_png(
+    #     #     f"step_{step_count}.png",
+    #     #     attacker_node=env.att.current_node,
+    #     #     attacker_patience=env.att.patience,
+    #     # )
+    #     # print(f"Attaccante in {env.att.current_node} with patience {env.att.patience}")
+    #     # step() esegue l'azione del difensore, la risposta dell'attaccante e calcola la ricompensa
+    #     prev_state, action, reward, next_state, done = env.step(training=True)
+        
+    #     # Il difensore impara dall'esperienza parzialmente osservata
+    #     difensore.learn(prev_state, action, reward, next_state, done)
+
+
     import random as rd
     
     # 1. Inizializziamo il difensore globale che manterrà la memoria tra i vari grafi
     difensore_in_training = Difensore(action_dimension=4, learning_rate=0.1, epsilon=0.9, gamma=0.95,epsilon_decay=0.9995, min_epsilon=0.01)
     
-    NUM_EPISODI = 1
+    NUM_EPISODI = 5000
     print(f"Inizio addestramento del Difensore Q-Learning (POMDP) per {NUM_EPISODI} episodi...\n")
     
     for episodio in range(1, NUM_EPISODI + 1):
-        print(f"\n=== EPISODIO {episodio} ===")
+        #print(f"\n=== EPISODIO {episodio} ===")
         # Generiamo grafi di lunghezza variabile ad ogni episodio per favorire la generalizzazione
-        lunghezza_percorso = rd.randint(5, 10)
+        lunghezza_percorso = 9
         env = environment(pathlength=lunghezza_percorso)
         
         # Sostituiamo il difensore dell'ambiente con quello sotto addestramento
@@ -445,7 +545,7 @@ if __name__ == "__main__":
         # Loop dell'episodio corrente
         while not done and env.sim_on:
             step_count += 1
-            env.G.save_graph_png(f"episodio_{episodio}_step_{step_count}.png")
+            #env.G.save_graph_png(f"episodio_{episodio}_step_{step_count}.png")
             # step() esegue l'azione del difensore, la risposta dell'attaccante e calcola la ricompensa
             prev_state, action, reward, next_state, done = env.step(training=True)
             
@@ -463,66 +563,66 @@ if __name__ == "__main__":
     print("\nAddestramento Completato! La Q-table del difensore ha mappato", len(difensore_in_training.q_table), "stati.")
     print("\n" + "="*50)
     
-    # print("INIZIO SIMULAZIONE DI VALUTAZIONE (EPISODIO N+1)")
-    # print("="*50)
+    print("INIZIO SIMULAZIONE DI VALUTAZIONE (EPISODIO N+1)")
+    print("="*50)
     
-    # # 1. Creiamo un ambiente dedicato per la simulazione finale
-    # lunghezza_test = 6  # Fissiamo una lunghezza per avere un output leggibile
-    # env_test = environment(pathlength=lunghezza_test)
+    # 1. Creiamo un ambiente dedicato per la simulazione finale
+    lunghezza_test = 6  # Fissiamo una lunghezza per avere un output leggibile
+    env_test = environment(pathlength=lunghezza_test)
     
-    # # Assegniamo il nostro difensore completamente addestrato
-    # env_test.dif = difensore_in_training
-    # env_test.reset()
+    # Assegniamo il nostro difensore completamente addestrato
+    env_test.dif = difensore_in_training
+    env_test.reset()
     
-    # done = False
-    # step_sim = 0
-    # total_test_reward = 0.0
+    done = False
+    step_sim = 0
+    total_test_reward = 0.0
     
-    # # Mappatura delle azioni per una stampa leggibile
-    # action_names = {
-    #     0: "Esca (Bait)", 
-    #     1: "Loop", 
-    #     2: "Vicolo Cieco (Deadend)", 
-    #     3: "Nessuna Azione / Altro"
-    # }
+    # Mappatura delle azioni per una stampa leggibile
+    action_names = {
+        0: "Esca (Bait)", 
+        1: "Loop", 
+        2: "Vicolo Cieco (Deadend)", 
+        3: "Nessuna Azione / Altro"
+    }
     
-    # # Salviamo la foto iniziale del percorso base
-    # env_test.G.save_graph_png(f"simulazione_step_{step_sim}_inizio.png")
+    # Salviamo la foto iniziale del percorso base
+    env_test.G.save_graph_png(f"simulazione_step_{step_sim}_inizio.png")
     
-    # while not done and env_test.sim_on:
-    #     step_sim += 1
-    #     print(f"\n--- TURNO {step_sim} ---")
+    while not done and env_test.sim_on:
+        step_sim += 1
+        print(f"\n--- TURNO {step_sim} ---")
         
-    #     # Rileviamo la posizione attuale dell'attaccante
-    #     att_node = env_test.att.current_node
-    #     node_name = env_test.G.G.nodes[att_node]['name']
-    #     print(f"📍 Posizione Attaccante: Nodo {att_node} [{node_name}]")
+        # Rileviamo la posizione attuale dell'attaccante
+        att_node = env_test.att.current_node
+        node_name = env_test.G.G.nodes[att_node]['name']
+        print(f"📍 Posizione Attaccante: Nodo {att_node} [{node_name}]")
         
-    #     # Rileviamo lo stato che viene passato alla rete
-    #     curr_state = env_test.getCurrentState()
-    #     print(f"📊 Stato POMDP (visto dal difensore): Distanza_Start={curr_state[0]}, Distanza_Target={curr_state[1]}, Pazienza_Stimata={curr_state[2]}")
+        # Rileviamo lo stato che viene passato alla rete
+        curr_state = env_test.getCurrentState()
+        print(f"📊 Stato POMDP (visto dal difensore): Distanza_Start={curr_state[0]}, Distanza_Target={curr_state[1]}, Pazienza_Stimata={curr_state[2]}")
         
-    #     # IL DIFENSORE SCEGLIE L'AZIONE (training=False impone l'Exploit puro, senza mosse random)
-    #     chosen_action = env_test.dif.step(curr_state, training=False)
-    #     print(f"🛡️  Azione scelta dalla Q-Table: {action_names.get(chosen_action, 'Sconosciuta')} (Azione {chosen_action})")
+        # IL DIFENSORE SCEGLIE L'AZIONE (training=False impone l'Exploit puro, senza mosse random)
+        chosen_action = env_test.dif.step(curr_state, training=False)
+        print(f"🛡️  Azione scelta dalla Q-Table: {action_names.get(chosen_action, 'Sconosciuta')} (Azione {chosen_action})")
         
-    #     # Facciamo avanzare l'ambiente di uno step
-    #     # Passiamo training=False anche qui per coerenza
-    #     prev_state, action, reward, next_state, done = env_test.step(training=False)
-    #     total_test_reward += reward
+        # Facciamo avanzare l'ambiente di uno step
+        # Passiamo training=False anche qui per coerenza
+        prev_state, action, reward, next_state, done = env_test.step(training=False)
+        total_test_reward += reward
         
-    #     # Mostriamo il risultato dell'azione sull'attaccante
-    #     print(f"💥 Reward di questo turno: {reward}")
-    #     print(f"😡 Pazienza REALE dell'attaccante: {env_test.att.patience}")
-    #     print(f"🗺️  Frontiera attuale dell'A*: {[n[2] for n in env_test.att.frontier]}")
+        # Mostriamo il risultato dell'azione sull'attaccante
+        print(f"💥 Reward di questo turno: {reward}")
+        print(f"😡 Pazienza REALE dell'attaccante: {env_test.att.patience}")
+        print(f"🗺️  Frontiera attuale dell'A*: {[n[2] for n in env_test.att.frontier]}")
         
-    #     # Scattiamo la foto del grafo dopo le modifiche
-    #     nome_foto = f"simulazione_step_{step_sim}.png"
-    #     env_test.G.save_graph_png(nome_foto)
-    #     # La funzione save_graph_png ha già un suo print integrato[cite: 3]
+        # Scattiamo la foto del grafo dopo le modifiche
+        nome_foto = f"simulazione_step_{step_sim}.png"
+        env_test.G.save_graph_png(nome_foto)
+        # La funzione save_graph_png ha già un suo print integrato[cite: 3]
         
-    # print("\n" + "="*50)
-    # print("SIMULAZIONE TERMINATA")
-    # print("="*50)
-    # print(f"🏆 Reward Totale accumulato: {total_test_reward}")
-    # print(f"🔍 Nodi totali esplorati (e sprecati) dall'attaccante: {len(env_test.att.explored_nodes)}")
+    print("\n" + "="*50)
+    print("SIMULAZIONE TERMINATA")
+    print("="*50)
+    print(f"🏆 Reward Totale accumulato: {total_test_reward}")
+    print(f"🔍 Nodi totali esplorati (e sprecati) dall'attaccante: {len(env_test.att.explored_nodes)}")
