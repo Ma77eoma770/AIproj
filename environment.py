@@ -82,9 +82,10 @@ class environment():
         done = False
 
         # 4. Condizioni di terminazione e ricompense finali
-        if att_status[0] == 'Target Reached':
+        
+        if att_status[0] == 'Target Reached' or att_status[0] == 'GaveUp':
             shortest_path_length = nx.shortest_path_length(self.G.G, source=self.G.start_node, target=self.G.target_node)
-            reward += 10 * (len(self.att.explored_nodes) - shortest_path_length + 1) # Reward proporzionale al numero di nodi esplorati oltre il percorso minimo (sprecati) 
+            reward += 10 * (len(self.att.explored_nodes) - shortest_path_length + 1) # Reward proporzionale al numero di nodi esplorati oltre il percorso minimo (sprecati) o penalità se l'attaccante ha rinunciato prima di raggiungere il target 
             done = True
             self.sim_on = False
 

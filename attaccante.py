@@ -2,7 +2,7 @@ import networkx as nx
 import heapq as hq
 
 class attaccante():
-    def __init__(self, start_node, start_heuristic, max_patience=100):
+    def __init__(self, start_node, start_heuristic, max_patience=100, max_backtrack=3):
         self.frontier = []      
         self.explored_nodes = set([start_node])  
         self.g_scores = {start_node: 0.0}
@@ -19,6 +19,8 @@ class attaccante():
 
         self.failed_nodes = set()  # Nodi che hanno portato a vicoli ciechi o loop
 
+        self.max_backtrack = max_backtrack  # Numero massimo di backtracking consentiti
+
     def step(self, env):
         self.env = env
         
@@ -30,9 +32,13 @@ class attaccante():
         # 1. CONTROLLO PAZIENZA             
         
         if self.patience <= 0:
+            if self.max_backtrack <= 0:
+                print("L'attaccante ha esaurito la pazienza e non può più fare backtracking. Simulazione terminata.")
+                return ('GaveUp', self.current_node)
             success = self.backtrack() 
             if not success:
                 return ('Stuck', self.current_node)
+            self.max_backtrack -= 1
             return ('Backtracked', self.current_node)
         
         # 2. ESPANSIONE
@@ -77,7 +83,7 @@ class attaccante():
                 self.patience = min(self.max_patience, self.patience + 5)
             else:
                 self.patience = max(0, self.patience - 15)
-                
+
         return ('Normal Step', self.current_node)
 
     def backtrack(self):
