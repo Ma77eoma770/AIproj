@@ -13,7 +13,8 @@ class environment():
         self.G.reset()
         self.sim_on = True
         self.att = attaccante(self.G.start_node, self.G.G.nodes[self.G.start_node]['heuristic'])
-        self.dif = difensore()
+        if not hasattr(self, 'dif') or self.dif is None:
+            self.dif = difensore()
         
         # Stato POMDP tracciato dall'ambiente
         self.distanceFromStart = 0
@@ -54,15 +55,21 @@ class environment():
             self.sim_on = False
             print("L'attaccante è rimasto bloccato senza alternative. Simulazione terminata.")  
 
-        undirected_G = self.G.G.to_undirected()
+        undirected_G = self.G.G.to_undirected(as_view=True)
 
         # Aggiornamento dello stato osservabile
-        if att_status[0] == 'Normal Step':
-            if self.G.G.nodes[att_status[1]].get('is_bait', False):
-                self.extimatedPatience = max(0, self.extimatedPatience - 15)
+        if att_status[0] in ('Normal Step', 'Jumped'):
+            if att_status[0] == 'Jumped':
+                # Restore to the parent's snapshot patience and apply jump penalty
+                parent_node = att_status[2]
+                self.extimatedPatience = self.patience_history.get(parent_node, self.extimatedPatience)
+                self.extimatedPatience = max(0, self.extimatedPatience - 20)
             else:
-                self.extimatedPatience = min(100, self.extimatedPatience + 5)
-            self.patience_history[att_status[1]] = self.extimatedPatience
+                # Normal step: lose 2 patience
+                self.extimatedPatience = max(0, self.extimatedPatience - 2)
+                
+            if self.att.current_node not in self.patience_history:
+                self.patience_history[self.att.current_node] = self.extimatedPatience
             try:
                 self.distanceToEnd = nx.shortest_path_length(undirected_G, source=self.att.current_node, target=self.G.target_node)
             except nx.NetworkXNoPath:
@@ -83,27 +90,45 @@ class environment():
 
         # 4. Condizioni di terminazione e ricompense finali
         
-        if att_status[0] == 'Target Reached' or att_status[0] == 'GaveUp':
+        if att_status[0] in ('Target Reached', 'GaveUp', 'Stuck'):
             shortest_path_length = nx.shortest_path_length(self.G.G, source=self.G.start_node, target=self.G.target_node)
-            reward += 10 * (len(self.att.explored_nodes) - shortest_path_length + 1) # Reward proporzionale al numero di nodi esplorati oltre il percorso minimo (sprecati) o penalità se l'attaccante ha rinunciato prima di raggiungere il target 
+            reward += 10.0 * (len(self.att.explored_nodes) - shortest_path_length + 1)
             done = True
             self.sim_on = False
 
         return prev_state, dif_action, reward, next_state, done
     
     def getCurrentState(self):
-            # 1. Bucket della pazienza (0-5) -> GIA' OTTIMO
+            # 1. Bucket della pazienza (0-5) - Usiamo la pazienza stimata (POMDP)
             patience_bucket = int(self.extimatedPatience // 20)
             
             # 2. Controllo topologia locale: l'attaccante è già su una trappola?
             current_node_data = self.G.G.nodes[self.att.current_node]
             is_on_trap = 1 if current_node_data.get('is_bait', False) else 0
             
-            # 3. Restituiamo lo stato compatto
+            # 3. Rileviamo se ci sono trappole adiacenti collegate al nodo corrente
+            has_bait = 0
+            has_loop = 0
+            has_deathend = 0
+            for neighbor in self.G.G.successors(self.att.current_node):
+                neighbor_data = self.G.G.nodes[neighbor]
+                if neighbor_data.get('is_bait', False):
+                    name = neighbor_data.get('name', '')
+                    if '_loop' in name:
+                        has_loop = 1
+                    elif '_deathend' in name:
+                        has_deathend = 1
+                    elif '_bait' in name:
+                        has_bait = 1
+            
+            # 4. Restituiamo lo stato esteso e compatto
             return (
                 self.distanceToEnd, 
                 patience_bucket,
-                is_on_trap
+                is_on_trap,
+                has_bait,
+                has_loop,
+                has_deathend
             )
     
     def get_neighbors(self,current_node):

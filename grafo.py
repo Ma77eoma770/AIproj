@@ -6,29 +6,52 @@ class graph:
         self.reset()
 
     def reset(self):
+        import random as rd
         self.G = nx.DiGraph()
         self.node_counter = 0 
+        
+        # 1. Creiamo i nodi
         for i in range(self.pathlength):
             node_id = self.node_counter
-            # Definiamo il nome testuale in base al ruolo del nodo
-            if i == 0:
-                node_name = "Start"
-            elif i == self.pathlength - 1:
-                node_name = "Target"
-            else:
-                node_name = f"Node_{i}"
-            self.G.add_node(
-                node_id, 
-                name=node_name,                               # Stringa descrittiva
-                heuristic=float(self.pathlength - i - 1), 
-                is_bait=False,
-            )
-            if i > 0:
-                # Colleghiamo il nodo precedente (node_id - 1) a quello corrente
-                self.G.add_edge(node_id - 1, node_id)
             self.node_counter += 1
-        self.start_node = 0                     # ID del nodo Start
-        self.target_node = self.pathlength - 1  # ID del nodo Target
+            if i == 0:
+                name = "Start"
+            elif i == self.pathlength - 1:
+                name = "Target"
+            else:
+                name = f"Page_{i}"
+            self.G.add_node(node_id, name=name, is_bait=False)
+            
+        self.start_node = 0
+        self.target_node = self.pathlength - 1
+        
+        # 2. Cammino principale per garantire la raggiungibilità
+        for i in range(self.pathlength - 1):
+            self.G.add_edge(i, i + 1)
+            
+        # 3. Aggiunta casuale di scorciatoie e link di ritorno locali (struttura web realistica)
+        for i in range(self.pathlength):
+            for j in range(self.pathlength):
+                if i == j:
+                    continue
+                # Scorciatoie in avanti (hyperlink locali, max 3 nodi)
+                if j > i + 1:
+                    if j - i <= 3:
+                        if rd.random() < 0.25:
+                            self.G.add_edge(i, j)
+                # Link di ritorno locali (max 3 nodi indietro)
+                elif j < i:
+                    if i - j <= 3:
+                        if rd.random() < 0.15:
+                            self.G.add_edge(i, j)
+                        
+        # 4. Calcoliamo l'euristica dinamica (distanza reale minima al Target)
+        for node in self.G.nodes:
+            try:
+                h_val = nx.shortest_path_length(self.G, source=node, target=self.target_node)
+            except nx.NetworkXNoPath:
+                h_val = self.pathlength * 2
+            self.G.nodes[node]['heuristic'] = float(h_val)
     
     def add_bait(self, start_node):
         newid = self.node_counter
@@ -37,7 +60,7 @@ class graph:
         newname= self.G.nodes[start_node]['name'] + "_bait"
 
         old_heuristic = self.G.nodes[start_node]['heuristic']
-        self.G.add_node(newid, name=newname, heuristic = max(1, old_heuristic - 1), is_bait=True)
+        self.G.add_node(newid, name=newname, heuristic = max(0.5, old_heuristic - 1.5), is_bait=True)
         self.G.add_edge(start_node, newid)
         return newid
     
@@ -52,7 +75,7 @@ class graph:
             else:
                 old_heuristic = self.G.nodes[newid-1]['heuristic']
 
-            self.G.add_node(newid, name=newname, heuristic=max(1, old_heuristic - 1), is_bait=True)
+            self.G.add_node(newid, name=newname, heuristic=max(0.5, old_heuristic - 1.5), is_bait=True)
             
             if i == 0:
                 self.G.add_edge(start_node,newid)
@@ -72,7 +95,7 @@ class graph:
             else:
                 old_heuristic = self.G.nodes[newid-1]['heuristic']
 
-            self.G.add_node(newid, name=newname, heuristic=max(1, old_heuristic - 1), is_bait=True)
+            self.G.add_node(newid, name=newname, heuristic=max(0.5, old_heuristic - 1.5), is_bait=True)
             
             if i == 0:
                 self.G.add_edge(start_node,newid)

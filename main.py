@@ -6,7 +6,7 @@ from environment import environment
 import random as rd
 
 # 1. Inizializziamo il difensore globale che manterrà la memoria tra i vari grafi
-difensore_in_training = difensore(action_dimension=4, learning_rate=0.1, epsilon=0.9, gamma=0.95,epsilon_decay=0.9997, min_epsilon=0.01)
+difensore_in_training = difensore(action_dimension=4, learning_rate=0.1, epsilon=0.9, gamma=0.99, epsilon_decay=0.9993, min_epsilon=0.01)
 
 NUM_EPISODI = 5000
 print(f"Inizio addestramento del Difensore Q-Learning (POMDP) per {NUM_EPISODI} episodi...\n")
@@ -14,7 +14,7 @@ print(f"Inizio addestramento del Difensore Q-Learning (POMDP) per {NUM_EPISODI} 
 for episodio in range(1, NUM_EPISODI + 1):
     #print(f"\n=== EPISODIO {episodio} ===")
     # Generiamo grafi di lunghezza variabile ad ogni episodio per favorire la generalizzazione
-    lunghezza_percorso = 9
+    lunghezza_percorso = 20
     env = environment(pathlength=lunghezza_percorso)
     
     # Sostituiamo il difensore dell'ambiente con quello sotto addestramento
@@ -49,7 +49,7 @@ print("INIZIO SIMULAZIONE DI VALUTAZIONE (EPISODIO N+1)")
 print("="*50)
 
 # 1. Creiamo un ambiente dedicato per la simulazione finale
-lunghezza_test = 6  # Fissiamo una lunghezza per avere un output leggibile
+lunghezza_test = 20  # Allineato al training per testare grafi reali
 env_test = environment(pathlength=lunghezza_test)
 
 # Assegniamo il nostro difensore completamente addestrato
@@ -82,7 +82,7 @@ while not done and env_test.sim_on:
     
     # Rileviamo lo stato che viene passato alla rete
     curr_state = env_test.getCurrentState()
-    print(f"📊 Stato POMDP (visto dal difensore): Distanza_Start={curr_state[0]}, Distanza_Target={curr_state[1]}, Bucket_Pazienza_Stimata={curr_state[2]}")
+    print(f"📊 Stato POMDP (visto dal difensore): Distanza_Target={curr_state[0]}, Bucket_Pazienza={curr_state[1]}, Su_Trappola={curr_state[2]}, Ha_Bait={curr_state[3]}, Ha_Loop={curr_state[4]}, Ha_Deathend={curr_state[5]}")
     
     # IL DIFENSORE SCEGLIE L'AZIONE (training=False impone l'Exploit puro, senza mosse random)
     chosen_action = env_test.dif.step(curr_state, training=False)
