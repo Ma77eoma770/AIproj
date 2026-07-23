@@ -65,10 +65,10 @@ class environment():
                 # Restore to the parent's snapshot patience and apply jump penalty
                 parent_node = att_status[3]
                 self.extimatedPatience = self.patience_history.get(parent_node, self.extimatedPatience)
-                self.extimatedPatience = max(0, self.extimatedPatience - (5 + 0.5 * (self.G.G.nodes[att_status[1]]['heuristic'] - self.G.G.nodes[att_status[2]]['heuristic'])))
+                self.extimatedPatience = max(0, self.extimatedPatience - (5 + (self.G.G.nodes[att_status[1]]['heuristic'] - self.G.G.nodes[att_status[2]]['heuristic'])))
             else:
                 # Normal step: gain 2 patience CHECK ON 100 HARDCODED !!!!!!!!!!!!!!!!!!!!!!
-                self.extimatedPatience = min(100, self.extimatedPatience + 2)
+                self.extimatedPatience = min(100, self.extimatedPatience)
                 
             if self.att.current_node not in self.patience_history:
                 self.patience_history[self.att.current_node] = self.extimatedPatience
@@ -135,10 +135,6 @@ class environment():
             return (
                 self.distanceToEnd, 
                 patience_bucket,
-                is_on_trap,
-                has_bait,
-                has_loop,
-                has_deathend
             )
     
     def get_neighbors(self,current_node):

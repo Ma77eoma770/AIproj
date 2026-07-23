@@ -73,10 +73,10 @@ class attaccante():
         is_jump = (parent_node != self.current_node)
         if is_jump:
             # Jumping branches: restore the snapshot patience minus a penalty of 5 + half of delta heuristic
-            self.patience = max(0, snapshot_patience - (5 + 0.5*(h_next - self.current_heuristic)))
+            self.patience = max(0, snapshot_patience - (5 + (h_next - self.current_heuristic)))
         else:
             # Normal step: gain 2 patience
-            self.patience = min(self.max_patience, self.patience + 2)
+            self.patience = min(self.max_patience, self.patience)
 
         # 6. Stagnation check
         if (abs(h_next - self.current_heuristic)) < 1:
