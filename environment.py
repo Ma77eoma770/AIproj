@@ -22,6 +22,8 @@ class environment():
         self.extimatedPatience = 100.0
 
         self.patience_history = {self.G.start_node: self.extimatedPatience}
+
+        self.stepped_traps = 0
         return self.getCurrentState()
 
     def step(self, training=True):
@@ -61,12 +63,12 @@ class environment():
         if att_status[0] in ('Normal Step', 'Jumped'):
             if att_status[0] == 'Jumped':
                 # Restore to the parent's snapshot patience and apply jump penalty
-                parent_node = att_status[2]
+                parent_node = att_status[3]
                 self.extimatedPatience = self.patience_history.get(parent_node, self.extimatedPatience)
-                self.extimatedPatience = max(0, self.extimatedPatience - 20)
+                self.extimatedPatience = max(0, self.extimatedPatience - (5 + 0.5 * (self.G.G.nodes[att_status[1]]['heuristic'] - self.G.G.nodes[att_status[2]]['heuristic'])))
             else:
-                # Normal step: lose 2 patience
-                self.extimatedPatience = max(0, self.extimatedPatience - 2)
+                # Normal step: gain 2 patience CHECK ON 100 HARDCODED !!!!!!!!!!!!!!!!!!!!!!
+                self.extimatedPatience = min(100, self.extimatedPatience + 2)
                 
             if self.att.current_node not in self.patience_history:
                 self.patience_history[self.att.current_node] = self.extimatedPatience
@@ -74,25 +76,33 @@ class environment():
                 self.distanceToEnd = nx.shortest_path_length(undirected_G, source=self.att.current_node, target=self.G.target_node)
             except nx.NetworkXNoPath:
                 self.distanceToEnd = 1000
-        
-        if att_status[0] == 'Backtracked':
-            self.extimatedPatience = self.patience_history.get(att_status[1], self.extimatedPatience)
-            try:
-                self.distanceToEnd = nx.shortest_path_length(undirected_G, source=self.att.current_node, target=self.G.target_node)
-            except nx.NetworkXNoPath:
-                self.distanceToEnd = 1000
-            
-            # TRASFORMA LA PENALITÀ IN PREMIO MASSIMO: +50 per aver costretto l'attaccante a scappare!
-            reward += 50.0  
+
+            # Instant reward
+            stepped_traps = sum(1 for n in self.att.explored_nodes if self.G.G.nodes[n].get('is_bait', False))
+            if stepped_traps > self.stepped_traps:
+                reward += 5
+                self.stepped_traps = stepped_traps 
 
         next_state = self.getCurrentState()
         done = False
 
         # 4. Condizioni di terminazione e ricompense finali
-        
-        if att_status[0] in ('Target Reached', 'GaveUp', 'Stuck'):
+        if att_status[0] == 'Target Reached':
+            # Vittoria: ha munto l'attaccante fino alla fine. Diamo il maxi-reward!
             shortest_path_length = nx.shortest_path_length(self.G.G, source=self.G.start_node, target=self.G.target_node)
-            reward += 10.0 * (len(self.att.explored_nodes) - shortest_path_length + 1)
+            reward += 5.0 * (len(self.att.explored_nodes) - shortest_path_length + 1)
+            done = True
+            self.sim_on = False
+            
+        elif att_status[0] == 'GaveUp':
+            # Fallimento: ha esagerato e l'attaccante si è stufato (NIENTE punti esplorazione)
+            reward -= 50.0
+            done = True
+            self.sim_on = False
+            
+        elif att_status[0] == 'Stuck':
+            # L'attaccante si è incastrato
+            reward -= 20.0
             done = True
             self.sim_on = False
 
